@@ -25,7 +25,7 @@ if not TOKEN:
     raise ValueError("❌ 找不到 DISCORD_TOKEN！請確認 .env 檔案或 Railway 環境變數是否已設定。")
 
 # 2. 請貼上你要發送訊息的 Discord 頻道 ID
-TARGET_CHANNEL_ID = 1478022744284332081
+TARGET_CHANNEL_ID = 1478062325029408829
 
 # 3. 自動播報時間設定 (已為你修改為台灣時間晚上 8 點)
 REPORT_TIME = "20:00"
@@ -189,5 +189,6 @@ async def on_ready():
     print(f'🏛️ 投信監控引擎(富邦專武) {bot.user} 已上線！')
     if not schedule_task.is_running():
         schedule_task.start()
+
 
 bot.run(TOKEN)
