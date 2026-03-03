@@ -4,6 +4,7 @@ import yfinance as yf
 import datetime
 import asyncio
 import requests
+import urllib3  # 新增：用來處理 HTTPS 警告
 from bs4 import BeautifulSoup
 import re
 import logging
@@ -15,6 +16,9 @@ load_dotenv()
 
 # 關閉 yfinance 煩人的警告訊息
 logging.getLogger('yfinance').setLevel(logging.CRITICAL)
+
+# 關閉 requests 略過 SSL 檢查時產生的警告訊息 (重要！)
+urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
 
 # ================= 設定區 =================
 # 1. 透過環境變數安全讀取 Token
@@ -75,7 +79,8 @@ def fetch_trust_data():
     top_sell = []
     
     try:
-        res = requests.get(url, headers=HEADERS, timeout=10)
+        # ✅ 關鍵修改：加入 verify=False 強制略過 SSL 憑證檢查
+        res = requests.get(url, headers=HEADERS, timeout=10, verify=False)
         res.encoding = 'big5' 
         soup = BeautifulSoup(res.text, 'html.parser')
         
@@ -133,7 +138,7 @@ def fetch_trust_data():
             str_name = format_stock_name(item['name'], 6)
             str_vol = f"{int(item['net_vol']):,}".rjust(9) + "張"
             
-            # 預設值 (避免 yfinance 抓不到時整個爛掉)
+            # 預設值
             str_price = "   N/A  "
             str_pct = "  ---   "
             color = ANSI_WHITE
@@ -155,12 +160,11 @@ def fetch_trust_data():
                     
                     str_price = f"${close:.2f}".rjust(8)
                     str_pct = f"{chg_pct:+.2f}%".rjust(8)
-                elif len(df) == 1: # 遇到剛除權息或剛上市可能只有一天資料
+                elif len(df) == 1:
                     close = float(df['Close'].iloc[-1])
                     str_price = f"${close:.2f}".rjust(8)
             except Exception as e:
                 print(f"⚠️ 無法取得 {item['ticker']} 的股價資訊: {e}")
-                # 即使出錯，依然會跑到下面的拼字串，確保印出名稱跟籌碼張數
             
             block_content += f"{str_ticker} {str_name} {str_price}  {color}{str_pct}{ANSI_RESET} | {ANSI_YELLOW}{str_vol}{ANSI_RESET}\n"
             
