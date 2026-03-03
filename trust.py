@@ -37,7 +37,8 @@ async def on_ready():
 async def manual_foreign(ctx):
     await ctx.send("🔄 正在為您抓取【外資】最新籌碼資料，請稍候...")
     try:
-        msg = fetch_fubon_moneydj_data(investor_code="1", investor_name="外資")
+        # 外資的網頁代碼是 zgk
+        msg = fetch_fubon_moneydj_data(page_id="zgk", investor_name="外資")
         await ctx.send(msg)
     except Exception as e:
         await ctx.send(f"⚠️ 抓取資料時發生錯誤：{e}")
@@ -46,7 +47,8 @@ async def manual_foreign(ctx):
 async def manual_trust(ctx):
     await ctx.send("🔄 正在為您抓取【投信】最新籌碼資料，請稍候...")
     try:
-        msg = fetch_fubon_moneydj_data(investor_code="2", investor_name="投信")
+        # 投信的網頁代碼是 zgl
+        msg = fetch_fubon_moneydj_data(page_id="zgl", investor_name="投信")
         await ctx.send(msg)
     except Exception as e:
         await ctx.send(f"⚠️ 抓取資料時發生錯誤：{e}")
@@ -68,18 +70,19 @@ async def daily_report():
     if channel:
         await channel.send("🔄 定時任務：正在抓取今日法人買賣超資料...")
         try:
-            # 晚上八點定時推播時，同時發送兩則訊息
-            foreign_msg = fetch_fubon_moneydj_data(investor_code="1", investor_name="外資")
+            # 晚上八點定時推播時，先發外資，再發投信
+            foreign_msg = fetch_fubon_moneydj_data(page_id="zgk", investor_name="外資")
             await channel.send(foreign_msg)
             
-            trust_msg = fetch_fubon_moneydj_data(investor_code="2", investor_name="投信")
+            trust_msg = fetch_fubon_moneydj_data(page_id="zgl", investor_name="投信")
             await channel.send(trust_msg)
         except Exception as e:
             await channel.send(f"⚠️ 抓取資料時發生錯誤：{e}")
 
-def fetch_fubon_moneydj_data(investor_code, investor_name):
-    twse_url = f"https://fubon-ebrokerdj.fbs.com.tw/z/zg/zgk.djhtm?A=D&B=0&C={investor_code}"
-    tpex_url = f"https://fubon-ebrokerdj.fbs.com.tw/z/zg/zgk.djhtm?A=D&B=1&C={investor_code}"
+def fetch_fubon_moneydj_data(page_id, investor_name):
+    # 正確套用網頁代碼 (zgk=外資, zgl=投信)，並固定 C=1 (依張數排序)
+    twse_url = f"https://fubon-ebrokerdj.fbs.com.tw/z/zg/{page_id}.djhtm?A=D&B=0&C=1"
+    tpex_url = f"https://fubon-ebrokerdj.fbs.com.tw/z/zg/{page_id}.djhtm?A=D&B=1&C=1"
     
     headers = {
         'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/114.0.0.0 Safari/537.36'
@@ -109,6 +112,7 @@ def fetch_fubon_moneydj_data(investor_code, investor_name):
             for row in rows:
                 cols = [td.text.strip() for td in row.find_all('td')]
                 
+                # 確保表格欄位足夠且第一欄是數字（名次）
                 if len(cols) >= 8:
                     if cols[0].isdigit() and len(buy_list) < 10:
                         buy_list.append(f"{cols[0]}. {cols[1]} ➔ {cols[2]} 張")
@@ -116,6 +120,7 @@ def fetch_fubon_moneydj_data(investor_code, investor_name):
                     if cols[5].isdigit() and len(sell_list) < 10:
                         sell_list.append(f"{cols[5]}. {cols[6]} ➔ {cols[7]} 張")
                         
+                # 抓滿十名就結束
                 if len(buy_list) >= 10 and len(sell_list) >= 10:
                     break
                     
