@@ -4,10 +4,10 @@ import os
 from dotenv import load_dotenv
 import datetime
 import requests
-import pandas as pd
+from bs4 import BeautifulSoup
 import urllib3
 
-# 隱藏並忽略所有的 SSL 憑證警告 (無敵模式)
+# 隱藏警告
 urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
 
 # 載入 .env 變數
@@ -20,7 +20,6 @@ intents = discord.Intents.default()
 intents.message_content = True 
 bot = commands.Bot(command_prefix='!', intents=intents)
 
-# 設定台灣時間 (UTC+8) 晚上 8 點播報
 tz = datetime.timezone(datetime.timedelta(hours=8))
 report_time = datetime.time(hour=20, minute=0, tzinfo=tz)
 
@@ -35,18 +34,18 @@ async def on_ready():
 
 @bot.command(name='外資', help='手動查詢最新外資買賣超前十名')
 async def manual_foreign(ctx):
-    await ctx.send("🔄 正在連接【官方交易所】抓取外資資料，請稍候...")
+    await ctx.send("🔄 正在連接【Yahoo 股市】抓取外資資料，請稍候...")
     try:
-        msg = fetch_official_data(investor_type="foreign")
+        msg = fetch_yahoo_rank(investor_type="foreign")
         await ctx.send(msg)
     except Exception as e:
         await ctx.send(f"⚠️ 抓取資料時發生錯誤：{e}")
 
 @bot.command(name='投信', help='手動查詢最新投信買賣超前十名')
 async def manual_trust(ctx):
-    await ctx.send("🔄 正在連接【官方交易所】抓取投信資料，請稍候...")
+    await ctx.send("🔄 正在連接【Yahoo 股市】抓取投信資料，請稍候...")
     try:
-        msg = fetch_official_data(investor_type="trust")
+        msg = fetch_yahoo_rank(investor_type="trust")
         await ctx.send(msg)
     except Exception as e:
         await ctx.send(f"⚠️ 抓取資料時發生錯誤：{e}")
@@ -56,6 +55,7 @@ async def manual_trust(ctx):
 @tasks.loop(time=report_time)
 async def daily_report():
     today = datetime.datetime.now(tz)
+    # 週末不播報
     if today.weekday() >= 5: 
         return
 
@@ -65,106 +65,84 @@ async def daily_report():
         
     channel = bot.get_channel(int(CHANNEL_ID))
     if channel:
-        await channel.send("🔄 定時任務：正在從官方交易所抓取今日法人資料...")
+        await channel.send("🔄 定時任務：正在從 Yahoo 股市抓取今日法人資料...")
         try:
-            foreign_msg = fetch_official_data(investor_type="foreign")
+            foreign_msg = fetch_yahoo_rank(investor_type="foreign")
             await channel.send(foreign_msg)
             
-            trust_msg = fetch_official_data(investor_type="trust")
+            trust_msg = fetch_yahoo_rank(investor_type="trust")
             await channel.send(trust_msg)
         except Exception as e:
             await channel.send(f"⚠️ 抓取資料時發生錯誤：{e}")
 
-def fetch_official_data(investor_type):
-    today = datetime.datetime.now(tz)
-    
-    # 👉 【關鍵修正 1】：判斷時間。如果現在早於下午 3 點 (15:00)，代表當天資料還沒出，強迫往前推一天！
-    if today.hour < 15:
-        today -= datetime.timedelta(days=1)
-    
-    # 👉 【關鍵修正 2】：遇到六日，繼續往前推到禮拜五
-    # 注意：如果今天是禮拜一早上，修正 1 會把它變成禮拜日，這裡修正 2 就會繼續把它推回禮拜五，完美銜接！
-    if today.weekday() == 5: # 星期六
-        today -= datetime.timedelta(days=1)
-    elif today.weekday() == 6: # 星期日
-        today -= datetime.timedelta(days=2)
-
-    # 官方 API 需要的日期格式
-    twse_date = today.strftime("%Y%m%d")
-    tpex_date = f"{today.year - 1911}/{today.strftime('%m/%d')}"
-    
+def fetch_yahoo_rank(investor_type):
     investor_name = "外資" if investor_type == "foreign" else "投信"
-    msg = f"📊 **【{investor_name}買賣超前十檔統整】**\n*(資料來源：台灣證券交易所 / 櫃買中心)*\n📅 **資料日期：{today.strftime('%Y-%m-%d')}**\n\n"
+    investor_url_part = "foreign-investor" if investor_type == "foreign" else "investment-trust"
     
-    # --- 1. 抓取上市 (TWSE) ---
-    try:
-        twse_url = f"https://www.twse.com.tw/rwd/zh/fund/T86?date={twse_date}&selectType=ALL&response=json"
-        # 👉 將 timeout 從 10 秒拉長到 30 秒，避免證交所網站半夜連線太慢
-        res = requests.get(twse_url, verify=False, timeout=30).json()
-        
-        if res.get('stat') == 'OK' and 'data' in res:
-            df_twse = pd.DataFrame(res['data'], columns=res['fields'])
-            
-            if investor_type == 'foreign':
-                net_cols = [c for c in df_twse.columns if '外' in c and '買賣超' in c]
-                net_col = net_cols[0] if net_cols else '外陸資買賣超股數(不含外資自營商)'
-            else:
-                net_cols = [c for c in df_twse.columns if '投信' in c and '買賣超' in c]
-                net_col = net_cols[0] if net_cols else '投信買賣超股數'
-                
-            df_twse = df_twse[['證券代號', '證券名稱', net_col]].copy()
-            df_twse.columns = ['Code', 'Name', 'Net']
-            
-            df_twse['Net'] = pd.to_numeric(df_twse['Net'].astype(str).str.replace(',', ''), errors='coerce') / 1000
-            df_twse = df_twse[df_twse['Code'].str.len() == 4]
-            
-            top_buy = df_twse.nlargest(10, 'Net')
-            top_sell = df_twse.nsmallest(10, 'Net')
-            
-            msg += f"**📈 上市{investor_name}買超**\n"
-            for i, row in enumerate(top_buy.itertuples(), 1):
-                msg += f"{i}. {row.Name} ({row.Code}) ➔ {int(row.Net):,} 張\n"
-                
-            msg += f"\n**📉 上市{investor_name}賣超**\n"
-            for i, row in enumerate(top_sell.itertuples(), 1):
-                msg += f"{i}. {row.Name} ({row.Code}) ➔ {int(row.Net):,} 張\n"
-        else:
-            msg += "⚠️ 上市資料尚未更新。\n"
-    except Exception as e:
-        msg += f"⚠️ 上市資料抓取失敗 ({e})\n"
-
-    msg += "\n-----------------------\n\n"
+    msg = f"📊 **【{investor_name}今日買賣超前十檔統整】**\n*(資料來源：Yahoo 股市)*\n\n"
     
-    # --- 2. 抓取上櫃 (TPEx) ---
-    try:
-        tpex_url = f"https://www.tpex.org.tw/web/stock/3insti/daily_trade/3itrade_hedge_result.php?l=zh-tw&o=json&se=EW&t=D&d={tpex_date}"
-        res = requests.get(tpex_url, verify=False, timeout=30).json()
-        
-        if res.get('aaData'):
-            df_tpex = pd.DataFrame(res['aaData'])
+    headers = {
+        'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/114.0.0.0 Safari/537.36'
+    }
+    
+    # 依序抓取：上市買超、上市賣超、上櫃買超、上櫃賣超
+    for market, market_name in [('TAI', '上市'), ('TWO', '上櫃')]:
+        for action, action_name in [('buy', '買超'), ('sell', '賣超')]:
             
-            net_idx = 10 if investor_type == 'foreign' else 13
+            url = f"https://tw.stock.yahoo.com/rank/{investor_url_part}-{action}?exchange={market}&period=day"
             
-            df_tpex = df_tpex[[0, 1, net_idx]].copy()
-            df_tpex.columns = ['Code', 'Name', 'Net']
-            df_tpex['Net'] = pd.to_numeric(df_tpex['Net'].astype(str).str.replace(',', ''), errors='coerce') / 1000
-            df_tpex = df_tpex[df_tpex['Code'].str.len() == 4]
-            
-            top_buy = df_tpex.nlargest(10, 'Net')
-            top_sell = df_tpex.nsmallest(10, 'Net')
-            
-            msg += f"**📈 上櫃{investor_name}買超**\n"
-            for i, row in enumerate(top_buy.itertuples(), 1):
-                msg += f"{i}. {row.Name} ({row.Code}) ➔ {int(row.Net):,} 張\n"
+            try:
+                # 加上 verify=False 與 timeout，確保連線穩定
+                res = requests.get(url, headers=headers, verify=False, timeout=15)
+                soup = BeautifulSoup(res.text, 'html.parser')
                 
-            msg += f"\n**📉 上櫃{investor_name}賣超**\n"
-            for i, row in enumerate(top_sell.itertuples(), 1):
-                msg += f"{i}. {row.Name} ({row.Code}) ➔ {int(row.Net):,} 張\n"
-        else:
-            msg += "⚠️ 上櫃資料尚未更新。\n"
-    except Exception as e:
-        msg += f"⚠️ 上櫃資料抓取失敗 ({e})\n"
-
+                results = []
+                
+                # Yahoo 股市的清單裡面，股票連結都會帶有 /quote/
+                for a_tag in soup.find_all('a', href=lambda x: x and '/quote/' in x):
+                    # 抓取該檔股票的整列區塊 (通常是 li 標籤)
+                    row = a_tag.find_parent('li')
+                    if not row:
+                        continue
+                        
+                    # 抽取出這列所有的純文字
+                    texts = [t for t in row.stripped_strings]
+                    
+                    # 確保這是一行完整的股票資料 (名次、名稱、代號 等等)
+                    # 例如: ['1', '台新新光金', '2887', '15.40', '...', '14,047']
+                    if len(texts) >= 5 and texts[0].isdigit():
+                        rank = texts[0]
+                        name = texts[1]
+                        code = texts[2] if texts[2].isdigit() else ""
+                        name_string = f"{name} ({code})" if code else name
+                        
+                        # 從最後面找尋張數 (避開前面的價格跟漲跌幅)
+                        vol = "0"
+                        for t in reversed(texts):
+                            if t.replace(',', '').replace('-', '').isdigit():
+                                vol = t
+                                break
+                                
+                        item = f"{rank}. {name_string} ➔ {vol} 張"
+                        
+                        # 避免重複並控制在 10 名內
+                        if item not in results and len(results) < 10:
+                            results.append(item)
+                            
+                    if len(results) >= 10:
+                        break
+                        
+                if not results:
+                    msg += f"⚠️ 查無 {market_name}{action_name} 資料 (可能尚未更新)。\n\n"
+                else:
+                    icon = "📈" if action == "buy" else "📉"
+                    msg += f"**{icon} {market_name}{investor_name}{action_name}**\n" + "\n".join(results) + "\n\n"
+                    
+            except Exception as e:
+                msg += f"⚠️ {market_name}{action_name} 抓取發生錯誤 ({e})\n\n"
+                
+        msg += "-----------------------\n\n"
+        
     return msg
 
 if __name__ == "__main__":
