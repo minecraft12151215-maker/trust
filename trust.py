@@ -37,7 +37,6 @@ async def on_ready():
 async def manual_foreign(ctx):
     await ctx.send("🔄 正在為您抓取【外資】最新籌碼資料，請稍候...")
     try:
-        # 外資的網頁代碼是 zgk
         msg = fetch_fubon_moneydj_data(page_id="zgk", investor_name="外資")
         await ctx.send(msg)
     except Exception as e:
@@ -47,7 +46,6 @@ async def manual_foreign(ctx):
 async def manual_trust(ctx):
     await ctx.send("🔄 正在為您抓取【投信】最新籌碼資料，請稍候...")
     try:
-        # 投信的網頁代碼是 zgl
         msg = fetch_fubon_moneydj_data(page_id="zgl", investor_name="投信")
         await ctx.send(msg)
     except Exception as e:
@@ -70,7 +68,6 @@ async def daily_report():
     if channel:
         await channel.send("🔄 定時任務：正在抓取今日法人買賣超資料...")
         try:
-            # 晚上八點定時推播時，先發外資，再發投信
             foreign_msg = fetch_fubon_moneydj_data(page_id="zgk", investor_name="外資")
             await channel.send(foreign_msg)
             
@@ -80,7 +77,6 @@ async def daily_report():
             await channel.send(f"⚠️ 抓取資料時發生錯誤：{e}")
 
 def fetch_fubon_moneydj_data(page_id, investor_name):
-    # 正確套用網頁代碼 (zgk=外資, zgl=投信)，並固定 C=1 (依張數排序)
     twse_url = f"https://fubon-ebrokerdj.fbs.com.tw/z/zg/{page_id}.djhtm?A=D&B=0&C=1"
     tpex_url = f"https://fubon-ebrokerdj.fbs.com.tw/z/zg/{page_id}.djhtm?A=D&B=1&C=1"
     
@@ -108,22 +104,31 @@ def fetch_fubon_moneydj_data(page_id, investor_name):
             buy_list = []
             sell_list = []
             
-            rows = soup.find_all('tr')
-            for row in rows:
-                cols = [td.text.strip() for td in row.find_all('td')]
-                
-                # 確保表格欄位足夠且第一欄是數字（名次）
-                if len(cols) >= 8:
-                    if cols[0].isdigit() and len(buy_list) < 10:
-                        buy_list.append(f"{cols[0]}. {cols[1]} ➔ {cols[2]} 張")
+            # 👉 【關鍵修正】精準鎖定 class="t01" 的主表格，杜絕所有側邊欄雜訊
+            target_table = soup.find('table', class_='t01')
+            
+            if target_table:
+                rows = target_table.find_all('tr')
+                for row in rows:
+                    cols = [td.text.strip() for td in row.find_all('td')]
                     
-                    if cols[5].isdigit() and len(sell_list) < 10:
-                        sell_list.append(f"{cols[5]}. {cols[6]} ➔ {cols[7]} 張")
+                    if len(cols) >= 8:
+                        # 左側：買超 (確認第一欄是數字名次)
+                        if cols[0].isdigit() and len(buy_list) < 10:
+                            name = cols[1].replace(' ', '') # 去除名稱中多餘空白
+                            vol = cols[2].replace(' ', '')
+                            buy_list.append(f"{cols[0]}. {name} ➔ {vol} 張")
                         
-                # 抓滿十名就結束
-                if len(buy_list) >= 10 and len(sell_list) >= 10:
-                    break
-                    
+                        # 右側：賣超 (確認第六欄是數字名次)
+                        if cols[5].isdigit() and len(sell_list) < 10:
+                            name = cols[6].replace(' ', '')
+                            vol = cols[7].replace(' ', '')
+                            sell_list.append(f"{cols[5]}. {name} ➔ {vol} 張")
+                            
+                    # 抓滿十名就提早結束
+                    if len(buy_list) >= 10 and len(sell_list) >= 10:
+                        break
+                        
             if not buy_list:
                 msg += f"⚠️ 抓不到{market}資料，可能網頁格式變更。\n\n"
                 continue
