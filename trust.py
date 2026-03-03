@@ -104,38 +104,36 @@ def fetch_fubon_moneydj_data(page_id, investor_name):
             buy_list = []
             sell_list = []
             
-            # 👉 【終極鎖定法】直接找裡面有「買超張數」跟「股票名稱」字眼的表格，杜絕側邊欄！
-            target_table = None
-            for table in soup.find_all('table'):
-                if '買超張數' in table.text and '股票名稱' in table.text:
-                    target_table = table
-                    break
-            
-            if target_table:
-                rows = target_table.find_all('tr')
-                for row in rows:
-                    cols = [td.text.strip() for td in row.find_all('td')]
+            # 👉 【終極掃描法】放棄尋找特定表格，直接過濾每一行資料
+            for row in soup.find_all('tr'):
+                cols = row.find_all('td')
+                
+                # 富邦主表格固定有 10 個欄位
+                if len(cols) >= 10:
+                    rank_b = cols[0].text.strip()
+                    name_b = cols[1].text.strip().replace(' ', '')
+                    vol_b  = cols[2].text.strip().replace(' ', '')
                     
-                    # 確保是完整的 10 欄位主資料表
-                    if len(cols) >= 10:
-                        # 處理買超名單
-                        if cols[0].isdigit() and len(buy_list) < 10:
-                            name = cols[1].replace(' ', '')
-                            vol = cols[2].replace(' ', '')
-                            if name:  # 確保名字不是空的
-                                buy_list.append(f"{cols[0]}. {name} ➔ {vol} 張")
-                        
-                        # 處理賣超名單
-                        if cols[5].isdigit() and len(sell_list) < 10:
-                            name = cols[6].replace(' ', '')
-                            vol = cols[7].replace(' ', '')
-                            if name:  # 確保名字不是空的
-                                sell_list.append(f"{cols[5]}. {name} ➔ {vol} 張")
+                    rank_s = cols[5].text.strip()
+                    name_s = cols[6].text.strip().replace(' ', '')
+                    vol_s  = cols[7].text.strip().replace(' ', '')
+                    
+                    # 嚴格把關 (買超)：名次要是數字、有股票名、有張數
+                    if rank_b.isdigit() and name_b and name_b != "股票名稱" and vol_b:
+                        item = f"{rank_b}. {name_b} ➔ {vol_b} 張"
+                        if item not in buy_list and len(buy_list) < 10:
+                            buy_list.append(item)
                             
-                    # 抓滿十名就結束
-                    if len(buy_list) >= 10 and len(sell_list) >= 10:
-                        break
-                        
+                    # 嚴格把關 (賣超)：名次要是數字、有股票名、有張數
+                    if rank_s.isdigit() and name_s and name_s != "股票名稱" and vol_s:
+                        item = f"{rank_s}. {name_s} ➔ {vol_s} 張"
+                        if item not in sell_list and len(sell_list) < 10:
+                            sell_list.append(item)
+                            
+                # 抓滿十名就打完收工
+                if len(buy_list) >= 10 and len(sell_list) >= 10:
+                    break
+                    
             if not buy_list:
                 msg += f"⚠️ 抓不到{market}資料，可能交易所尚未更新或網頁改版。\n\n"
                 continue
