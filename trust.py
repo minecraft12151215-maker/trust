@@ -104,33 +104,40 @@ def fetch_fubon_moneydj_data(page_id, investor_name):
             buy_list = []
             sell_list = []
             
-            # 👉 【關鍵修正】精準鎖定 class="t01" 的主表格，杜絕所有側邊欄雜訊
-            target_table = soup.find('table', class_='t01')
+            # 👉 【終極鎖定法】直接找裡面有「買超張數」跟「股票名稱」字眼的表格，杜絕側邊欄！
+            target_table = None
+            for table in soup.find_all('table'):
+                if '買超張數' in table.text and '股票名稱' in table.text:
+                    target_table = table
+                    break
             
             if target_table:
                 rows = target_table.find_all('tr')
                 for row in rows:
                     cols = [td.text.strip() for td in row.find_all('td')]
                     
-                    if len(cols) >= 8:
-                        # 左側：買超 (確認第一欄是數字名次)
+                    # 確保是完整的 10 欄位主資料表
+                    if len(cols) >= 10:
+                        # 處理買超名單
                         if cols[0].isdigit() and len(buy_list) < 10:
-                            name = cols[1].replace(' ', '') # 去除名稱中多餘空白
+                            name = cols[1].replace(' ', '')
                             vol = cols[2].replace(' ', '')
-                            buy_list.append(f"{cols[0]}. {name} ➔ {vol} 張")
+                            if name:  # 確保名字不是空的
+                                buy_list.append(f"{cols[0]}. {name} ➔ {vol} 張")
                         
-                        # 右側：賣超 (確認第六欄是數字名次)
+                        # 處理賣超名單
                         if cols[5].isdigit() and len(sell_list) < 10:
                             name = cols[6].replace(' ', '')
                             vol = cols[7].replace(' ', '')
-                            sell_list.append(f"{cols[5]}. {name} ➔ {vol} 張")
+                            if name:  # 確保名字不是空的
+                                sell_list.append(f"{cols[5]}. {name} ➔ {vol} 張")
                             
-                    # 抓滿十名就提早結束
+                    # 抓滿十名就結束
                     if len(buy_list) >= 10 and len(sell_list) >= 10:
                         break
                         
             if not buy_list:
-                msg += f"⚠️ 抓不到{market}資料，可能網頁格式變更。\n\n"
+                msg += f"⚠️ 抓不到{market}資料，可能交易所尚未更新或網頁改版。\n\n"
                 continue
 
             msg += f"**📈 {market}{investor_name}買超**\n" + "\n".join(buy_list) + "\n\n"
