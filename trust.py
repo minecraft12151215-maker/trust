@@ -10,27 +10,26 @@ import logging
 import os
 from dotenv import load_dotenv
 
-# 載入 .env 檔案 (在 Railway 上執行時，這行不會報錯，會自動去抓 Railway 後台的變數)
+# 載入 .env 檔案
 load_dotenv()
 
 # 關閉 yfinance 煩人的警告訊息
 logging.getLogger('yfinance').setLevel(logging.CRITICAL)
 
 # ================= 設定區 =================
-# 1. 透過環境變數安全讀取 Token (請在 .env 或 Railway 後台設定 DISCORD_TOKEN)
+# 1. 透過環境變數安全讀取 Token
 TOKEN = os.getenv('DISCORD_TOKEN')
 
-# 安全機制：如果抓不到 Token，直接停止執行並報錯
 if not TOKEN:
     raise ValueError("❌ 找不到 DISCORD_TOKEN！請確認 .env 檔案或 Railway 環境變數是否已設定。")
 
 # 2. 請貼上你要發送訊息的 Discord 頻道 ID
-TARGET_CHANNEL_ID = 1478062325029408829
+TARGET_CHANNEL_ID = 1478022744284332081
 
-# 3. 自動播報時間設定 (已為你修改為台灣時間晚上 8 點)
+# 3. 自動播報時間設定 (台灣時間)
 REPORT_TIME = "20:00"
 
-# ✅ 建立台灣專屬時區 (UTC+8)
+# 建立台灣專屬時區 (UTC+8)
 tw_tz = datetime.timezone(datetime.timedelta(hours=8))
 # =========================================
 
@@ -42,7 +41,7 @@ HEADERS = {
     'Accept-Language': 'zh-TW,zh;q=0.9,en-US;q=0.8'
 }
 
-# ================= 終極 Discord 完美對齊工具 =================
+# ================= Discord 完美對齊工具 =================
 def to_full_width(text):
     """將半形英數字轉換為全形，確保在 Discord 中絕對對齊"""
     res = ""
@@ -56,7 +55,7 @@ def to_full_width(text):
     return res
 
 def format_stock_name(name, length=6):
-    """名稱轉全形並固定長度為 6，不足補全形空白"""
+    """名稱轉全形並固定長度，不足補全形空白"""
     fw_name = to_full_width(name)[:length]
     return fw_name + '　' * (length - len(fw_name))
 # =======================================================
@@ -69,8 +68,7 @@ def fetch_trust_data():
     ANSI_WHITE = "\u001b[0;37m"  
     ANSI_RESET = "\u001b[0m"
 
-    print("開始從富邦證券掃描投信買賣超排行榜...")
-    # ✅ 老闆指定的正確網址：ZGK_DD 代表投信買賣超排行
+    print("🔍 開始從富邦證券掃描投信買賣超排行榜...")
     url = "https://fubon-ebrokerdj.fbs.com.tw/Z/ZG/ZGK_DD.djhtm"
     
     top_buy = []
@@ -78,14 +76,15 @@ def fetch_trust_data():
     
     try:
         res = requests.get(url, headers=HEADERS, timeout=10)
-        res.encoding = 'big5' # 解決台灣金融網頁亂碼問題
+        res.encoding = 'big5' 
         soup = BeautifulSoup(res.text, 'html.parser')
         
+        # 增強版網頁解析：不寫死欄位數量，動態尋找資料
         for tr in soup.find_all('tr'):
             tds = tr.find_all('td')
-            if len(tds) >= 10:
+            if len(tds) >= 6: # 只要有基本的 6 欄就嘗試解析
                 text1 = tds[0].text.strip()
-                if text1.isdigit():
+                if text1.isdigit(): # 確認第一欄是排名數字
                     # --- 處理左半邊：投信買超 ---
                     if len(top_buy) < 12:
                         buy_name_full = tds[1].text.strip()
@@ -99,9 +98,16 @@ def fetch_trust_data():
                             })
                             
                     # --- 處理右半邊：投信賣超 ---
-                    if len(top_sell) < 12:
-                        sell_name_full = tds[6].text.strip() 
-                        sell_vol = tds[7].text.strip().replace(',', '').replace('-', '') 
+                    # 動態尋找右半邊的「排名」欄位到底在 index 幾
+                    right_rank_idx = -1
+                    for i in range(3, len(tds) - 2):
+                        if tds[i].text.strip().isdigit():
+                            right_rank_idx = i
+                            break
+                            
+                    if right_rank_idx != -1 and len(top_sell) < 12:
+                        sell_name_full = tds[right_rank_idx + 1].text.strip() 
+                        sell_vol = tds[right_rank_idx + 2].text.strip().replace(',', '').replace('-', '') 
                         sell_match = re.match(r'^([A-Z0-9]+)(.*)$', sell_name_full)
                         if sell_match:
                             top_sell.append({
@@ -110,14 +116,28 @@ def fetch_trust_data():
                                 'net_vol': sell_vol
                             })
     except Exception as e:
-        print(f"富邦投信網頁爬取失敗: {e}")
+        print(f"❌ 富邦投信網頁爬取或解析失敗: {e}")
+
+    print(f"✅ 成功抓取: 買超 {len(top_buy)} 檔, 賣超 {len(top_sell)} 檔")
 
     all_targets = {"🔥 投信作帳衝刺 (買超排行)": top_buy, "🧊 投信結帳逃命 (賣超排行)": top_sell}
     results = {}
 
     for title, target_list in all_targets.items():
+        if not target_list:
+            continue # 如果該清單沒東西就跳過
+            
         block_content = "```ansi\n"
         for item in target_list:
+            str_ticker = item['ticker'].ljust(6)
+            str_name = format_stock_name(item['name'], 6)
+            str_vol = f"{int(item['net_vol']):,}".rjust(9) + "張"
+            
+            # 預設值 (避免 yfinance 抓不到時整個爛掉)
+            str_price = "   N/A  "
+            str_pct = "  ---   "
+            color = ANSI_WHITE
+
             try:
                 ticker_tw = f"{item['ticker']}.TW"
                 df = yf.Ticker(ticker_tw).history(period="2d")
@@ -126,23 +146,24 @@ def fetch_trust_data():
                     df = yf.Ticker(ticker_two).history(period="2d")
                 
                 if len(df) >= 2:
-                    close = df['Close'].iloc[-1]
-                    prev_close = df['Close'].iloc[-2]
+                    close = float(df['Close'].iloc[-1])
+                    prev_close = float(df['Close'].iloc[-2])
                     chg_pct = ((close - prev_close) / prev_close) * 100
                     
                     if chg_pct > 0: color = ANSI_RED
                     elif chg_pct < 0: color = ANSI_GREEN
-                    else: color = ANSI_WHITE
                     
-                    str_ticker = item['ticker'].ljust(6)
-                    str_name = format_stock_name(item['name'], 6)
                     str_price = f"${close:.2f}".rjust(8)
                     str_pct = f"{chg_pct:+.2f}%".rjust(8)
-                    str_vol = f"{int(item['net_vol']):,}".rjust(9) + "張"
-                    
-                    block_content += f"{str_ticker} {str_name} {str_price}  {color}{str_pct}{ANSI_RESET} | {ANSI_YELLOW}{str_vol}{ANSI_RESET}\n"
-            except Exception:
-                pass
+                elif len(df) == 1: # 遇到剛除權息或剛上市可能只有一天資料
+                    close = float(df['Close'].iloc[-1])
+                    str_price = f"${close:.2f}".rjust(8)
+            except Exception as e:
+                print(f"⚠️ 無法取得 {item['ticker']} 的股價資訊: {e}")
+                # 即使出錯，依然會跑到下面的拼字串，確保印出名稱跟籌碼張數
+            
+            block_content += f"{str_ticker} {str_name} {str_price}  {color}{str_pct}{ANSI_RESET} | {ANSI_YELLOW}{str_vol}{ANSI_RESET}\n"
+            
         block_content += "```"
         results[title] = block_content
 
@@ -161,15 +182,20 @@ async def send_trust_report(channel):
             color=0x27ae60 
         )
 
+        has_data = False
         for title, content in results.items():
-            if "```ansi\n```" not in content:
+            if content.strip() != "```ansi\n```":
                 embed.add_field(name=title, value=content, inline=False)
+                has_data = True
+
+        if not has_data:
+            embed.add_field(name="⚠️ 狀態回報", value="今日尚未有投信買賣超資料，或網頁來源格式變更導致無法解析。", inline=False)
 
         embed.set_footer(text="數據來源：富邦證券/yfinance ｜ 紅色=上漲 ｜ 綠色=下跌")
         
         await msg.edit(content=None, embed=embed)
     except Exception as e:
-        await msg.edit(content=f"❌ 抓取投信籌碼時發生錯誤：`{e}`")
+        await msg.edit(content=f"❌ 系統發生嚴重錯誤：`{e}`")
 
 @tasks.loop(minutes=1)
 async def schedule_task():
@@ -186,9 +212,8 @@ async def trust(ctx):
 
 @bot.event
 async def on_ready():
-    print(f'🏛️ 投信監控引擎(富邦專武) {bot.user} 已上線！')
+    print(f'✅ 投信監控引擎 {bot.user} 已上線並準備就緒！')
     if not schedule_task.is_running():
         schedule_task.start()
-
 
 bot.run(TOKEN)
