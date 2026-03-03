@@ -78,7 +78,12 @@ async def daily_report():
 def fetch_official_data(investor_type):
     today = datetime.datetime.now(tz)
     
-    # 如果今天是六日，自動往前推算到星期五
+    # 👉 【關鍵修正 1】：判斷時間。如果現在早於下午 3 點 (15:00)，代表當天資料還沒出，強迫往前推一天！
+    if today.hour < 15:
+        today -= datetime.timedelta(days=1)
+    
+    # 👉 【關鍵修正 2】：遇到六日，繼續往前推到禮拜五
+    # 注意：如果今天是禮拜一早上，修正 1 會把它變成禮拜日，這裡修正 2 就會繼續把它推回禮拜五，完美銜接！
     if today.weekday() == 5: # 星期六
         today -= datetime.timedelta(days=1)
     elif today.weekday() == 6: # 星期日
@@ -94,13 +99,12 @@ def fetch_official_data(investor_type):
     # --- 1. 抓取上市 (TWSE) ---
     try:
         twse_url = f"https://www.twse.com.tw/rwd/zh/fund/T86?date={twse_date}&selectType=ALL&response=json"
-        # 這裡套用 verify=False 繞過我們一開始遇到的憑證問題
-        res = requests.get(twse_url, verify=False, timeout=10).json()
+        # 👉 將 timeout 從 10 秒拉長到 30 秒，避免證交所網站半夜連線太慢
+        res = requests.get(twse_url, verify=False, timeout=30).json()
         
         if res.get('stat') == 'OK' and 'data' in res:
             df_twse = pd.DataFrame(res['data'], columns=res['fields'])
             
-            # 動態尋找買賣超的欄位
             if investor_type == 'foreign':
                 net_cols = [c for c in df_twse.columns if '外' in c and '買賣超' in c]
                 net_col = net_cols[0] if net_cols else '外陸資買賣超股數(不含外資自營商)'
@@ -111,9 +115,7 @@ def fetch_official_data(investor_type):
             df_twse = df_twse[['證券代號', '證券名稱', net_col]].copy()
             df_twse.columns = ['Code', 'Name', 'Net']
             
-            # 把字串轉回數字並換算成「張」
             df_twse['Net'] = pd.to_numeric(df_twse['Net'].astype(str).str.replace(',', ''), errors='coerce') / 1000
-            # 過濾掉 6 碼的權證，只留 4 碼一般股票
             df_twse = df_twse[df_twse['Code'].str.len() == 4]
             
             top_buy = df_twse.nlargest(10, 'Net')
@@ -136,12 +138,11 @@ def fetch_official_data(investor_type):
     # --- 2. 抓取上櫃 (TPEx) ---
     try:
         tpex_url = f"https://www.tpex.org.tw/web/stock/3insti/daily_trade/3itrade_hedge_result.php?l=zh-tw&o=json&se=EW&t=D&d={tpex_date}"
-        res = requests.get(tpex_url, verify=False, timeout=10).json()
+        res = requests.get(tpex_url, verify=False, timeout=30).json()
         
         if res.get('aaData'):
             df_tpex = pd.DataFrame(res['aaData'])
             
-            # 官方上櫃欄位：0是代號, 1是名稱, 10是外資總計買賣超, 13是投信買賣超
             net_idx = 10 if investor_type == 'foreign' else 13
             
             df_tpex = df_tpex[[0, 1, net_idx]].copy()
