@@ -108,24 +108,15 @@ def fetch_yahoo_rank(investor_type):
                         rank = texts[0]
                         name = texts[1]
                         
-                        # 👉 修正 1：用 .TW 或 .TWO 識別股票代號，解決消失的問題
+                        # 精準抓取股票代號 (遇到 .TW 或 .TWO 就截斷保留前面的數字)
                         code = ""
                         for t in texts:
                             if '.TW' in t or '.TWO' in t:
-                                code = t.split('.')[0] # 把後面的 .TW 切掉
+                                code = t.split('.')[0]
                                 break
                         
-                        # 👉 修正 2：精準抓取「買賣超」欄位
-                        # Yahoo 後面 5 個數字固定為：[買進, 賣出, 買賣超, 成交量, 持股]
-                        data_values = []
-                        for t in reversed(texts):
-                            if any(char.isdigit() for char in t):
-                                data_values.append(t)
-                            if len(data_values) == 5:
-                                break
-                        
-                        # 倒數第三個就是「買賣超」
-                        vol = data_values[2] if len(data_values) >= 3 else "0"
+                        # 直接鎖定倒數第 4 個數值 (絕對是買賣超張數)
+                        vol = texts[-4]
                         
                         name_string = f"{name} ({code})" if code else name
                         item = f"{rank}. {name_string} ➔ {vol} 張"
