@@ -30,8 +30,6 @@ async def on_ready():
         daily_report.start()
         print("已啟動每晚 8 點的投信籌碼排程播報任務。")
 
-# --- 【獨立指令區】 ---
-
 @bot.command(name='投信', help='手動查詢最新投信買賣超前十名')
 async def manual_trust(ctx):
     await ctx.send("🔄 正在連接【Yahoo 股市】抓取投信資料，請稍候...")
@@ -40,8 +38,6 @@ async def manual_trust(ctx):
         await ctx.send(msg)
     except Exception as e:
         await ctx.send(f"⚠️ 抓取資料時發生錯誤：{e}")
-
-# ----------------------
 
 @tasks.loop(time=report_time)
 async def daily_report():
@@ -64,7 +60,6 @@ async def daily_report():
             await channel.send(f"⚠️ 抓取資料時發生錯誤：{e}")
 
 def fetch_yahoo_trust_rank():
-    # 直接鎖定投信網址
     investor_url_part = "investment-trust"
     msg = f"📊 **【投信今日買賣超前十檔統整】**\n*(資料來源：Yahoo 股市)*\n\n"
     
@@ -83,6 +78,7 @@ def fetch_yahoo_trust_rank():
                 soup = BeautifulSoup(res.text, 'html.parser')
                 
                 results = []
+                processed_codes = set() # 用來記錄抓過的股票，防止重複
                 
                 for a_tag in soup.find_all('a', href=lambda x: x and '/quote/' in x):
                     row = a_tag.find_parent('li')
@@ -91,24 +87,26 @@ def fetch_yahoo_trust_rank():
                         
                     texts = [t for t in row.stripped_strings]
                     
-                    if len(texts) >= 8 and texts[0].isdigit():
-                        rank = texts[0]
-                        name = texts[1]
+                    # 精準抓取股票代號
+                    code = ""
+                    name = ""
+                    for i, t in enumerate(texts):
+                        if '.TW' in t or '.TWO' in t:
+                            code = t.split('.')[0]
+                            name = texts[i - 1] if i > 0 else "未知"
+                            break
+                    
+                    # 確認有代號且還沒被記錄過
+                    if code and code not in processed_codes:
+                        processed_codes.add(code) # 記下來，確保不會重複抓
                         
-                        # 精準抓取股票代號
-                        code = ""
-                        for t in texts:
-                            if '.TW' in t or '.TWO' in t:
-                                code = t.split('.')[0]
-                                break
-                        
-                        # 直接鎖定倒數第 4 個數值 (買賣超張數)
-                        vol = texts[-4]
-                        
-                        name_string = f"{name} ({code})" if code else name
-                        item = f"{rank}. {name_string} ➔ {vol} 張"
-                        
-                        if item not in results and len(results) < 10:
+                        if len(texts) >= 6:
+                            vol = texts[-4] # 倒數第 4 格是買賣超
+                            
+                            # 👉 放棄原本的 texts[0]，直接用長度自己排 1 到 10 名
+                            rank = len(results) + 1 
+                            
+                            item = f"{rank}. {name} ({code}) ➔ {vol} 張"
                             results.append(item)
                             
                     if len(results) >= 10:
