@@ -28,24 +28,15 @@ async def on_ready():
     print(f'機器人已成功登入：{bot.user}')
     if not daily_report.is_running():
         daily_report.start()
-        print("已啟動每晚 8 點的法人籌碼排程播報任務。")
+        print("已啟動每晚 8 點的投信籌碼排程播報任務。")
 
 # --- 【獨立指令區】 ---
-
-@bot.command(name='外資', help='手動查詢最新外資買賣超前十名')
-async def manual_foreign(ctx):
-    await ctx.send("🔄 正在連接【Yahoo 股市】抓取外資資料，請稍候...")
-    try:
-        msg = fetch_yahoo_rank(investor_type="foreign")
-        await ctx.send(msg)
-    except Exception as e:
-        await ctx.send(f"⚠️ 抓取資料時發生錯誤：{e}")
 
 @bot.command(name='投信', help='手動查詢最新投信買賣超前十名')
 async def manual_trust(ctx):
     await ctx.send("🔄 正在連接【Yahoo 股市】抓取投信資料，請稍候...")
     try:
-        msg = fetch_yahoo_rank(investor_type="trust")
+        msg = fetch_yahoo_trust_rank()
         await ctx.send(msg)
     except Exception as e:
         await ctx.send(f"⚠️ 抓取資料時發生錯誤：{e}")
@@ -65,21 +56,17 @@ async def daily_report():
         
     channel = bot.get_channel(int(CHANNEL_ID))
     if channel:
-        await channel.send("🔄 定時任務：正在從 Yahoo 股市抓取今日法人資料...")
+        await channel.send("🔄 定時任務：正在從 Yahoo 股市抓取今日【投信】資料...")
         try:
-            foreign_msg = fetch_yahoo_rank(investor_type="foreign")
-            await channel.send(foreign_msg)
-            
-            trust_msg = fetch_yahoo_rank(investor_type="trust")
+            trust_msg = fetch_yahoo_trust_rank()
             await channel.send(trust_msg)
         except Exception as e:
             await channel.send(f"⚠️ 抓取資料時發生錯誤：{e}")
 
-def fetch_yahoo_rank(investor_type):
-    investor_name = "外資" if investor_type == "foreign" else "投信"
-    investor_url_part = "foreign-investor" if investor_type == "foreign" else "investment-trust"
-    
-    msg = f"📊 **【{investor_name}今日買賣超前十檔統整】**\n*(資料來源：Yahoo 股市)*\n\n"
+def fetch_yahoo_trust_rank():
+    # 直接鎖定投信網址
+    investor_url_part = "investment-trust"
+    msg = f"📊 **【投信今日買賣超前十檔統整】**\n*(資料來源：Yahoo 股市)*\n\n"
     
     headers = {
         'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/114.0.0.0 Safari/537.36'
@@ -108,14 +95,14 @@ def fetch_yahoo_rank(investor_type):
                         rank = texts[0]
                         name = texts[1]
                         
-                        # 精準抓取股票代號 (遇到 .TW 或 .TWO 就截斷保留前面的數字)
+                        # 精準抓取股票代號
                         code = ""
                         for t in texts:
                             if '.TW' in t or '.TWO' in t:
                                 code = t.split('.')[0]
                                 break
                         
-                        # 直接鎖定倒數第 4 個數值 (絕對是買賣超張數)
+                        # 直接鎖定倒數第 4 個數值 (買賣超張數)
                         vol = texts[-4]
                         
                         name_string = f"{name} ({code})" if code else name
@@ -131,7 +118,7 @@ def fetch_yahoo_rank(investor_type):
                     msg += f"⚠️ 查無 {market_name}{action_name} 資料 (可能尚未更新)。\n\n"
                 else:
                     icon = "📈" if action == "buy" else "📉"
-                    msg += f"**{icon} {market_name}{investor_name}{action_name}**\n" + "\n".join(results) + "\n\n"
+                    msg += f"**{icon} {market_name}投信{action_name}**\n" + "\n".join(results) + "\n\n"
                     
             except Exception as e:
                 msg += f"⚠️ {market_name}{action_name} 抓取發生錯誤 ({e})\n\n"
